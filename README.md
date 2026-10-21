@@ -1,6 +1,8 @@
 # Portfolio
 
-### Data Science Project
+### NHAMCS Project
+
+### Economic and Environmental Visualization Project
 ##### For a group project in my Data Science course, I collaborated with my team to analyze the relationship between economic inequality and environmental health using global datasets from the World Bank. We cleaned, merged, and analyzed economic and environmental indicators for over 180 countries using R and R Markdown. I led the climate change analysis, examining how greenhouse gas emissions varied across income groups through data wrangling, exploratory analysis, and visualizations including bar plots and boxplots. My analysis revealed that lower-income countries often experience higher and more variable emissions, highlighting how environmental harm disproportionately affects economically disadvantaged regions.
 
 
