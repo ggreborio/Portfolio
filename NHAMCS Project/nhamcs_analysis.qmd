@@ -1,0 +1,126 @@
+---
+title: "ED Triage Level and ICU Admission: NHAMCS 2022"
+author: "Georgette Greborio"
+format:
+  html:
+    code-fold: true
+    toc: true
+    embed-resources: true
+execute:
+  warning: false
+---
+
+### background
+
+This project extends my EPI 218 class project, which used a 20-record
+sample, to the full public-use dataset.
+
+
+I read the Stata file directly with `haven`, so there is no Excel step.
+
+```{r}
+library(haven)
+library(dplyr)
+library(tidyverse)
+
+ed <- read_dta("ed2022-stata.dta")
+dim(ed)
+```
+
+### cleaning data set
+
+```{r}
+ed_focused <- ed |> 
+  select(AGE, SEX, ARREMS, TOTCHRON, IMMEDR, ADMITHOS, ADMIT, PATWT, CPSUM, CSTRATM)
+```
+
+NHAMCS uses negative codes (in this case -9 and -7) for "blank" and "not applicable." I recoded the hospital admission column, which includes different codes indicating which department the patient was admitted to if they were admitted. I coded admission to a critical care unit as 1, and every other outcome (admission to another unit, or no admission) as 0. Unknown and blank entries were set to missing.
+
+```{r}
+ed_cleaned <- ed_focused |> 
+  mutate( icu_admission = case_when(
+    ADMIT == 1 ~ 1,
+    ADMIT %in% c(2, 3, 4, 5, 6, -7) ~ 0,
+    ADMIT %in% c(-8, -9) ~ NA_real_,
+    .default = NA_real_
+  )
+  )
+
+ed_cleaned <- ed_cleaned |> 
+  mutate(
+    IMMEDR = if_else(IMMEDR %in% 1:5, IMMEDR, NA_real_),
+    triage = factor(IMMEDR,
+                    levels = 1:5,
+                    labels = c("Immediate", "Emergent", "Urgent",
+                               "Semi-urgent", "Nonurgent")),
+    AGE = if_else(AGE %in% 0:94, AGE, NA_real_)                           
+  )
+
+```
+
+We can now remove the NAs from every column in order to analyze data. 5962 entries (out of total 16025) containing relvants NAs were removed. I am also combining "semi-urgent" and "non-urgent" categories, as "non-urgent" only has one clean case.
+
+```{r}
+ed_cleaned <- ed_cleaned |>
+  mutate(triage = fct_collapse(triage,
+                                   "Semi/Nonurgent" = c("Semi-urgent", "Nonurgent")))
+
+ed_model <- ed_cleaned |>
+  filter(!is.na(icu_admission), !is.na(triage), !is.na(AGE))
+
+nrow(ed_cleaned)-nrow(ed_model)
+```
+
+### analysis
+
+This table below shows that the triage category "immediate" had the highest percentage of ICU admission out of all groups - 21.6% of all visits being admitted to ICU - and "emergent" had then second highest, with 7.59% of visits being admitted to ICU.
+```{r}
+ed_model |> 
+  group_by(triage) |> 
+  summarize(
+    total_visits_per_triage_level = n(),
+    ICU_cases_per_triage_level = sum(icu_admission),
+    ICU_Percentage_per_triage_level = 100 * mean(icu_admission)
+  )
+```
+
+Using Pearson's chi-squared test to analyze association between categorical data, in this case ICU admission and triage type. The p-value here is very close to 0, indicating that evidence against there being no relationship between the two is strong.
+
+```{r}
+chisq.test(table(ed_model$icu_admission, ed_model$triage))
+```
+
+Now we can use a logistic regression model to see the odds of each triage level by ICU admission. First, I reorded the levels of triage so that "urgent" is the reference group, as it is the largest (n = 5250). The highest log-odds coefficient is the relation between ICU admission and "immediate" (coeff = 2.845), and exponentiating it gives an odds ratio of 17.2.
+
+```{r}
+ed_model$triage <- relevel(ed_model$triage, ref = "Urgent")
+
+logOdds <- glm(icu_admission ~ triage, family = binomial, data = ed_model)
+
+round(exp(cbind(OR = coef(logOdds), confint(logOdds, level = 0.95))), 2)
+```
+
+Now we can do the same analysis with age and icu admission. I have scaled age in years by 10 so that the ratio and intervals are larger and easier to read. The odds ratio (OR = 1.44233) shows that for each additional 10 years added to a patient's age, there is a 4.4% increase in odds of being admitted to the ICU. This was run at a 95% confidence interval as well, with the odds ratio most likely landing between 36% and 53%.
+
+When adding the predictor of age to the relationship between triage level and ICU admission, the odds ratio for "immediate" drops fom 17.2 to 14.7 (-2.5 difference) and the odds ratio for age increases from 0.21 to 1.33 (1.12 difference). 
+
+```{r}
+
+logOdds_age <- glm(icu_admission ~ I(AGE / 10), family = binomial, data = ed_model)
+round(exp(cbind(OR = coef(logOdds_age), confint(logOdds_age, level = 0.95))), 5)
+
+logOdds_age_triage <- glm(icu_admission ~ triage + I(AGE / 10), family = binomial, data = ed_model)
+round(exp(cbind(OR = coef(logOdds_age_triage), confint(logOdds_age_triage, level = 0.95))), 2)
+```
+
+### results and short discussion
+10063 patient visits were analyzed out of the total 16025 patient visits in the NHAMCS survey in 2022. The 10063 visits had a valid ICU outcome, triage level and age. ICU outcome and triage level had a positive relationship: as triage urgency level increased, the amount of ICU admissions also increased. About 21.6% of "immediate" visits, 7.59% of "emergent" visits and 1.58% "urgent" visits were sent to the ICU. After adjusting for age, the "immediate" visits were associated with 14.7 times the odds of ICU admission (95% CI 9.0–23.5), relative to "urgent". The "emmergent" triage level was associated with 4.6 times the odds of "urgent" (95% CI 3.5–6.2). Each additional 10 years is associated with a 1.33 times the odds of ICU admission (95% CI [1.25, 1.42]) when compared to patients in the same, repsective triage level. 
+
+### limitations
+The data in this analysis is unweighted, therefore is not representative of the entire US hospital visits but only the hospitals that were surveyed. It is also to be noted that 5,962 entries were eliminated due to missing information in one of the predictors or outcome. 
+
+It should be noted that odds ratios can exaggerate risk when outcomes are common - ICU admission in the emergency department is not uncommon and therefore may also skew differences.
+
+### conclusion
+
+My conclusion is that higher triage urgancy and older age are each associated with higher odds of ICU admissions in this sample. Both predictors remained highly associated with ICU admission after adjusting for each other.
